@@ -1,16 +1,19 @@
 import sqlite3
-import datetime
+from datetime import datetime
 import os
 from enum import Enum
 
 class InputOptions(Enum):
     EXIT = (0, "Exit")
-    CREATE_GAME_INVENTORY_ITEMS_GAMEID_ENTRIES = (1, "Create the 12 GameInventoryItems entries for new GameID")
-    CREATE_GAME_INFO_ENTRY = (2, "Create GameInfo entry")
-    CREATE_REGION_ENTRY = (3, "Create Region entry")
-    SHOW_ALL_REGION_ENTRIES = (4, "Show all Regions entries")
-    CREATE_MARKETPLACE_ENTRY = (5, "Create Marketplace entry")
-    SHOW_ALL_MARKETPLACE_ENTRIES = (6, "Show all Marketplace entries")
+    SHOW_ALL_MARKETPLACE_ENTRIES = (1, "Show all Marketplace entries")
+    CREATE_MARKETPLACE_ENTRY = (2, "Create Marketplace entry")
+    SHOW_SHIPMENTSIN_ENTRY = (3, "Show a certain (or all) shipments in entries")
+    CREATE_SHIPMENTSIN_ENTRY = (4, "Create Shipment In entry")
+
+    CREATE_GAME_INVENTORY_ITEMS_GAMEID_ENTRIES = (5, "Create the 12 GameInventoryItems entries for new GameID")
+    CREATE_GAME_INFO_ENTRY = (6, "Create GameInfo entry")
+    CREATE_REGION_ENTRY = (7, "Create Region entry")
+    SHOW_ALL_REGION_ENTRIES = (8, "Show all Regions entries")
 
     def __new__(cls, value, description):
         obj = object.__new__(cls)
@@ -18,14 +21,190 @@ class InputOptions(Enum):
         obj.description = description
         return obj
 
-def createLog(error_message):
+def displayMenu() -> None:
+    print("Make a selection between the following options:")
+    for inputOption in InputOptions:
+        print(f"{inputOption.value}: {inputOption.description}")
+
+def strippedInput(prompt: str, newLine: bool=True) -> str:
+    if newLine:
+         return input(prompt + "\n").strip()
+    else:
+        return input(prompt).strip()
+
+def pauseOrError(message: str, shouldClearScreen: bool=True) -> None:
+    if message:
+        strippedInput(f"{message}\nEnter any key to continue")
+    else:
+        strippedInput("Enter any key to continue")
+    if shouldClearScreen: clearScreen()
+   
+def createLog(error_message: str) -> None:
     errorLogFile = 'Error Log.log'
 
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with open(errorLogFile, 'a') as errorFile:
         errorFile.write(f"[{timestamp}] {error_message}\n")
 
-def createGameInventoryItemsGameIDEntries(databaseConnection, GameID):
+def handleException(exception: BaseException) -> None:
+    exceptionType = type(exception)
+    exceptionName = exceptionType.__name__
+    errorMessage = f"{exceptionName}: {str(exception)}"
+
+    if exceptionType == sqlite3.IntegrityError:
+        pauseOrError(errorMessage + "\nThe value entered already exists in the database. Please try a new value\n")
+        createLog(errorMessage)
+    else:
+        pauseOrError(errorMessage)
+        createLog(errorMessage)
+
+def clearScreen() -> None:
+    os.system('cls' if os.name == 'nt' else 'clear')
+
+def getTrueFalseFromInput(message: str) -> bool:
+    validTrue = {"1", "y", "yes"}
+    validFalse = {"0", "n", "no"}
+
+    while True:
+        response = strippedInput(message).lower()
+        if response in validTrue:
+            return True
+        if response in validFalse: 
+            return False
+        else:
+            pauseOrError("Invalid response. Please enter 0, 1, n, y, no, yes")
+
+def displayTable(cursor: sqlite3.Cursor, tableName: str, columnNames: list[str], beforeCommit: bool=False, loneCall: bool=False) -> None:
+    clearScreen()
+
+    #Get the tables metadata
+    cursor.execute(f"PRAGMA table_info({tableName})")
+    tableInfo = cursor.fetchall()
+
+    #row[5] indicates if the column is a primary key. If it is, we extract the primaryKey column name from row[1]
+    for row in tableInfo:
+        if row[5] > 0:
+            primaryKeyColumnName = [row[1]]
+            break
+    else:
+        primaryKeyColumnName = []
+
+    #combine the primaryKey column name with the columnNames previously specified. 
+    #using dict.fromKeys turns the combination into a dictionary which removes duplicates and preserves order
+    #we then convert it back into a list for use
+    columns = list(dict.fromkeys(primaryKeyColumnName + columnNames))
+
+    #take the combined names and convert them from a list of strings into a single formated string for use in sql SELECT
+    columnsJoined = ", ".join(columns)
+
+    #if the table has a primaryKey column, sort by most recent added entries
+    if primaryKeyColumnName:
+        orderBy = primaryKeyColumnName[0]
+        orderClause = f"ORDER BY {orderBy} ASC"
+    #if no primaryKey column, fallback to no ordering
+    else:
+        orderBy = None
+        orderClause = ""
+
+    cursor.execute(f"SELECT {columnsJoined} FROM {tableName} {orderClause} LIMIT 24")
+    rows = cursor.fetchall()
+
+    #minor formatting differences depending on when the function is called
+    if beforeCommit:
+        print(f"Displaying {tableName} including uncommited changes\n")
+    else:
+        print(f"Displaying {tableName}\n")
+
+    #if rows is empty, inform user and exit
+    if not rows:
+        print("No entries found.\n")
+        if loneCall:
+            print("")
+            pauseOrError(None, False)
+        return
+
+    # Calculate max width for each column based on header and values
+    colWidths = []
+    for colIndex in range(len(columns)):
+        headerWidth = len(columns[colIndex])
+        maxDataWidth = max((len(str(row[colIndex])) for row in rows), default=0)
+        colWidths.append(max(headerWidth, maxDataWidth))
+
+    # Print header row
+    header = " | ".join(columns[i].ljust(colWidths[i]) for i in range(len(columns)))
+    print(header)
+    print("-" * len(header))
+
+    # Print data rows
+    for row in rows:
+        rowStr = " | ".join(str(row[i]).ljust(colWidths[i]) for i in range(len(row)))
+        print(rowStr)
+
+    print("")
+    if loneCall:
+        pauseOrError(None, False)
+
+def confirmCommit(databaseConnection: sqlite3.Connection) -> bool:
+    if getTrueFalseFromInput("Commit Entry?"):
+        databaseConnection.commit()
+        pauseOrError("Entry(s) Commited.\n")
+        return True
+    else:
+        databaseConnection.rollback()
+        pauseOrError("Previous entry(s) discarded\n")
+        return False
+
+def insertRows(databaseConnection: sqlite3.Connection, tableName: str, columnNames: list[str], values: list[str] | list[list[str]]) -> None:
+    cursor = databaseConnection.cursor()
+    columnNamesJoined = ", ".join(columnNames)
+    valuePlaceholders = ", ".join(["?"] * len(columnNames))
+    sqlInsertStatement = f"INSERT INTO {tableName} ({columnNamesJoined}) VALUES ({valuePlaceholders})"
+
+    try:
+        #if values is many lists of strings, conduct more performant executemany method
+        if isinstance(values[0], list):
+            cursor.executemany(sqlInsertStatement, values)
+
+        #if it isn't do standard execute method
+        else:
+            cursor.execute(sqlInsertStatement, values)
+            
+        #display the table showing the uncommited new entry   
+        displayTable(cursor, tableName, columnNames, True)
+        confirmCommit(databaseConnection)
+
+    except Exception as exception:
+        databaseConnection.rollback()
+        handleException(exception)
+
+def createEntry(databaseConnection: sqlite3.Connection, tableName: str, columnName: list[str]) -> None:
+    while True:
+        clearScreen()
+        cursor = databaseConnection.cursor()
+
+        if getTrueFalseFromInput(f"Show existing {tableName} entries?"):
+            displayTable(cursor, tableName, columnName)
+
+        values = []
+        for column in columnName:
+            value = strippedInput(f"Enter the {column}")
+            values.append(value)
+
+        insertRows(databaseConnection, tableName, columnName, values)
+
+        if not getTrueFalseFromInput(f"Add another {tableName} entry?"):
+            clearScreen()
+            break
+
+def createRegionEntry(databaseConnection: sqlite3.Connection) -> None:
+    createEntry(databaseConnection, "Regions", ["Region"])
+
+def createMarketplaceEntry(databaseConnection: sqlite3.Connection) -> None:
+    createEntry(databaseConnection, "Marketplaces", ["Marketplace"])
+
+def createGameInventoryItemsGameIDEntries(databaseConnection: sqlite3.Connection) -> None:
+    clearScreen()
+    gameID = strippedInput("Input the GameID, ensure you insert correctly")
     cursor = databaseConnection.cursor()
 
     #grab contentTypes from the database
@@ -35,148 +214,38 @@ def createGameInventoryItemsGameIDEntries(databaseConnection, GameID):
     #grab conditions from the database
     cursor.execute(f"SELECT Condition from Conditions")
     conditions = [row[0] for row in cursor.fetchall()]
-
+    
+    values = []
     for contentType in contentTypes:
         for condition in conditions:
-            cursor.execute(
-                f"INSERT INTO GameInventoryItems (GameID, ContentType, Condition)"
-                f"VALUES (?, ?, ?)",
-                (GameID, contentType, condition)
-            )
-    databaseConnection.commit()
+            values.append([gameID, contentType, condition])
+            
+    insertRows(databaseConnection, "GameInventoryItems", ["GameID", "ContentType", "Condition"], values)
 
-def createGameInfoEntry(databaseConnection):
-    cursor = databaseConnection.cursor()
-
-    gameID = input("Enter the GameID\n")
-    name = input("Enter the Name\n")
-
-    cursor.execute(f"SELECT Region from Regions")
-    regions = [row[0] for row in cursor.fetchall()]
-    print("Select one of the following: " + ", ".join(regions))
-    region = input("Enter the Region\n")
-
-    platform = input("Enter the Platform\n")
-    priceChartingURL = input("Enter the PriceChartingURL\n")
-
-    cursor.execute(
-    f"INSERT INTO GameInfo (GameID, Name, Region, Platform, PriceChartingURL)"
-    f"VALUES (?, ?, ?, ?, ?)",
-    (gameID, name, region, platform, priceChartingURL)
-    )
-    databaseConnection.commit()
-
-def createRegionEntry(databaseConnection):
-    while True:
-        cursor = databaseConnection.cursor()
-        shouldDisplayRegions = getTrueFalseFromInput("Show existing region entries?: 0/no, 1/yes\n")
-
-        if shouldDisplayRegions:
-            displayRegions(databaseConnection)
-
-        region = input("Enter the Region\n")
-        try:
-            cursor.execute(
-                f"INSERT INTO Regions (Region)"
-                f"VALUES (?)",
-                (region,))
-            databaseConnection.commit()
-        except sqlite3.IntegrityError:
-            handleError(f"{region} already exists.")
-        #Check if user wants to add additional entries. If not, break
-        if not getTrueFalseFromInput("Add another Region entry? 0/no 1/yes\n"):
-            break
-
-def displayRegions(databaseConnection):
-    cursor = databaseConnection.cursor()
-    cursor.execute("SELECT Region FROM Regions")
-    regions = [row[0] for row in cursor.fetchall()]
-    print("Existing Regions: \n")
-    for region in regions:
-        print(f"{region}")
-    pause()
-
-def createMarketplaceEntry(databaseConnection):
-    while True:
-        cursor = databaseConnection.cursor()
-        shouldDisplayMarketplaces = getTrueFalseFromInput("Show existing marketplace entries?: 0/no, 1/yes\n")
-
-        if shouldDisplayMarketplaces:
-            displayMarketplaces(databaseConnection)
-        
-        marketplace = input("Enter the Marketplace\n")
-        try:
-            cursor.execute(
-                f"INSERT INTO Marketplaces (Marketplace)"
-                f"VALUES (?)",
-                (marketplace,))
-            databaseConnection.commit()
-        except sqlite3.IntegrityError:
-            handleError(f"{marketplace} already exists.")
-
-        #Check if user wants to add additional entries. If not, break
-        if not getTrueFalseFromInput("Add another Marketplace entry? 0/no 1/yes\n"):
-            break
-
-def displayMarketplaces(databaseConnection):
-    cursor = databaseConnection.cursor()
-    cursor.execute("SELECT Marketplace FROM Marketplaces")
-    marketplaces = [row[0] for row in cursor.fetchall()]
-    print("Existing Marketplaces: \n")
-    for marketplace in marketplaces:
-        print(f"{marketplace}")
-    pause()
-
-
-
-def displayMenu():
-    print("Make a selection between the following options:")
-    for inputOption in InputOptions:
-        print(f"{inputOption.value}: {inputOption.description}")
-
-def clearScreen():
-    os.system('cls' if os.name == 'nt' else 'clear')
-
-def handleError(message: str, shouldClearScreen: bool=True):
-    if shouldClearScreen: clearScreen()
-    input(f"{message}\nEnter any key to continue\n")
-    if shouldClearScreen: clearScreen()
-   
-
-def getTrueFalseFromInput(prompt):
-    validTrue = {"1", "y", "yes"}
-    validFalse = {"0", "n", "no"}
-
-    while True:
-        response = input(prompt).strip().lower()
-        if response in validTrue:
-            return True
-        if response in validFalse: 
-            return False
-        else:
-            handleError("Invalid response. Please enter 0, 1, n, y, no, yes")
-
-def pause(message: str ="Enter any key to continue"):
-    input(f"\n{message}\n")
-
+def createGameInfoEntry(databaseConnection: sqlite3.Connection) -> None:
+    createEntry(databaseConnection, "GameInfo", ["GameID", "Name", "Region", "Platform", "PriceChartingURL"])
+#    cursor.execute(f"SELECT Region from Regions")
+#    regions = [row[0] for row in cursor.fetchall()]
+#    print("Select one of the following: " + ", ".join(regions))
 
 def main():
     databaseFile = 'Inventory Finances Database.sqlite'
     with sqlite3.connect(databaseFile) as databaseConnection:
+        cursor = databaseConnection.cursor()
         while True:
             displayMenu()
-            userInput = input("Enter your choice: \n")
+            userInput = strippedInput("Enter your choice:")
             
             #ensure input is an integer before we cast it to an int
             if not userInput.isnumeric():
-                handleError("Input must be an integer")
+                pauseOrError("Input must be an integer")
                 continue
 
             intUserInput = int(userInput)
             try:
                 selectionOption = InputOptions(intUserInput)
             except ValueError:
-                handleError("Invalid option selected. Please choose a valid entry")
+                pauseOrError("Invalid option selected. Please choose a valid entry")
                 continue
 
             match selectionOption:
@@ -184,13 +253,10 @@ def main():
                     break
 
                 case InputOptions.CREATE_GAME_INVENTORY_ITEMS_GAMEID_ENTRIES:
-                    clearScreen()
-                    gameID = input("Input the GameID, ensure you insert correctly\n")
-                    createGameInventoryItemsGameIDEntries(databaseConnection, gameID)
+                    createGameInventoryItemsGameIDEntries(databaseConnection)
                     continue
 
                 case InputOptions.CREATE_GAME_INFO_ENTRY:
-
                     createGameInfoEntry(databaseConnection)
                     continue
 
@@ -199,7 +265,8 @@ def main():
                     continue
 
                 case InputOptions.SHOW_ALL_REGION_ENTRIES:
-                    displayRegions(databaseConnection)
+                    displayTable(cursor, "Regions", ["Region"], False, True)
+                    clearScreen()
                     continue
 
                 case InputOptions.CREATE_MARKETPLACE_ENTRY:
@@ -207,8 +274,17 @@ def main():
                     continue
 
                 case InputOptions.SHOW_ALL_MARKETPLACE_ENTRIES:
-                    displayMarketplaces(databaseConnection)
+                    displayTable(cursor, "Marketplaces", ["Marketplace"], False, True)
+                    clearScreen()
                     continue
+
+    #            case InputOptions.CREATE_SHIPMENTSIN_ENTRY:
+    #                createShipmentsInEntry(databaseConnection)
+    #                continue
+                
+    #            case InputOptions.SHOW_SHIPMENTSIN_ENTRY:
+    #                displayShipmentsInEntry(databaseConnection)
+    #                continue
 
 if __name__ == '__main__':
     main()

@@ -15,7 +15,7 @@ class InputOptions(Enum):
     CREATE_REGION_ENTRY = (7, "Create Region entry")
     SHOW_ALL_REGION_ENTRIES = (8, "Show all Regions entries")
 
-    def __new__(cls, value, description):
+    def __new__(cls, value: int, description: str):
         obj = object.__new__(cls)
         obj._value_ = value
         obj.description = description
@@ -74,6 +74,60 @@ def getTrueFalseFromInput(message: str) -> bool:
         else:
             pauseOrError("Invalid response. Please enter 0, 1, n, y, no, yes")
 
+def formatAndPrintTable(columnNames: list[str], rows: list[tuple]) -> None:
+    # Calculate max width for each column based on header and values
+    columnWidths = []
+    spacedColumnNames = []
+    
+    #Loop through each column, add the larger of the length of the header or the largest value to the columnWidths list
+    for columnIndex, columnName in enumerate(columnNames):
+        headerWidth = len(columnName)
+        
+        highestWidthValue = 0
+        for row in rows:
+            #Get the value in the current row for the current column and cast it to a string
+            value = str(row[columnIndex])
+            #Get the length of the current value
+            valueLength = len(value)
+            #if the length is greater than the previously largest length, overwrite it
+            if valueLength > highestWidthValue:
+                highestWidthValue = valueLength
+
+        #Add the larger width of either the header or the largest value
+        columnWidths.append(max(headerWidth, highestWidthValue))
+    
+    #Loop through each column, left justify the names and increase the size with spaces, then add them all to the spacedColumnNames list
+    for columnIndex, columnName in enumerate(columnNames):
+        #Get the previously stored max width of this column
+        columnWidth = columnWidths[columnIndex]
+        #Take the columnName and expand it to be the desired width. Fill the empty with spaces.
+        spacedColumnName = columnName.ljust(columnWidth)
+        #Add each spacedColumnName to a list
+        spacedColumnNames.append(spacedColumnName)
+
+    #Combine each column's name into one string, and separate them with a line
+    header = " | ".join(spacedColumnNames)
+    #Add a second line to header and make it all dashes equal to the length of the first line of the header
+    header = header + "\n" + "-" * len(header)
+
+    print(header)     
+
+    #Loop through each row, format its values, then print the formatted rows
+    for row in rows:
+        spacedRowValues = []
+        #Loop through each value in the row, left justify the value and increase the size with spaces, then add them all to the spacedRowValues list
+        for columnIndex, rowValue in enumerate(row):
+            #Get the value in one columns entry and cast it to a string
+            rowValue = str(rowValue)
+            #Take the rowValue and expand it to be the desired width. Fill the empty with spaces.
+            spacedRowValue = rowValue.ljust(columnWidths[columnIndex])
+            #Add each spacedRowValue to a list
+            spacedRowValues.append(spacedRowValue)
+
+        #Combine each row value into one string, and separate them with a line
+        rowStr = " | ".join(spacedRowValues)
+        print(rowStr)
+
 def displayTable(cursor: sqlite3.Cursor, tableName: str, columnNames: list[str], beforeCommit: bool=False, loneCall: bool=False) -> None:
     clearScreen()
 
@@ -100,7 +154,7 @@ def displayTable(cursor: sqlite3.Cursor, tableName: str, columnNames: list[str],
     #if the table has a primaryKey column, sort by most recent added entries
     if primaryKeyColumnName:
         orderBy = primaryKeyColumnName[0]
-        orderClause = f"ORDER BY {orderBy} ASC"
+        orderClause = f"ORDER BY {orderBy} DESC"
     #if no primaryKey column, fallback to no ordering
     else:
         orderBy = None
@@ -108,6 +162,7 @@ def displayTable(cursor: sqlite3.Cursor, tableName: str, columnNames: list[str],
 
     cursor.execute(f"SELECT {columnsJoined} FROM {tableName} {orderClause} LIMIT 24")
     rows = cursor.fetchall()
+    rows.reverse()
 
     #minor formatting differences depending on when the function is called
     if beforeCommit:
@@ -123,22 +178,7 @@ def displayTable(cursor: sqlite3.Cursor, tableName: str, columnNames: list[str],
             pauseOrError(None, False)
         return
 
-    # Calculate max width for each column based on header and values
-    colWidths = []
-    for colIndex in range(len(columns)):
-        headerWidth = len(columns[colIndex])
-        maxDataWidth = max((len(str(row[colIndex])) for row in rows), default=0)
-        colWidths.append(max(headerWidth, maxDataWidth))
-
-    # Print header row
-    header = " | ".join(columns[i].ljust(colWidths[i]) for i in range(len(columns)))
-    print(header)
-    print("-" * len(header))
-
-    # Print data rows
-    for row in rows:
-        rowStr = " | ".join(str(row[i]).ljust(colWidths[i]) for i in range(len(row)))
-        print(rowStr)
+    formatAndPrintTable(columns, rows)
 
     print("")
     if loneCall:

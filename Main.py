@@ -176,6 +176,7 @@ def displayTable(cursor: sqlite3.Cursor, tableName: str, columnNames: list[str],
         if loneCall:
             print("")
             pauseOrError(None, False)
+            clearScreen()
         return
 
     formatAndPrintTable(columns, rows)
@@ -183,6 +184,7 @@ def displayTable(cursor: sqlite3.Cursor, tableName: str, columnNames: list[str],
     print("")
     if loneCall:
         pauseOrError(None, False)
+        clearScreen()
 
 def confirmCommit(databaseConnection: sqlite3.Connection) -> bool:
     if getTrueFalseFromInput("Commit Entry?"):
@@ -306,7 +308,6 @@ def main():
 
                 case InputOptions.SHOW_ALL_REGION_ENTRIES:
                     displayTable(cursor, "Regions", ["Region"], False, True)
-                    clearScreen()
                     continue
 
                 case InputOptions.CREATE_MARKETPLACE_ENTRY:
@@ -315,7 +316,6 @@ def main():
 
                 case InputOptions.SHOW_ALL_MARKETPLACE_ENTRIES:
                     displayTable(cursor, "Marketplaces", ["Marketplace"], False, True)
-                    clearScreen()
                     continue
 
     #            case InputOptions.CREATE_SHIPMENTSIN_ENTRY:

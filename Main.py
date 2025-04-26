@@ -49,24 +49,25 @@ def createLog(error_message: str) -> None:
 def handleException(exception: BaseException) -> None:
     exceptionName = type(exception).__name__
     exceptionMessage = str(exception)
+    exceptionMessageLowered = exceptionMessage.lower()
     errorMessage = f"{exceptionName}: {exceptionMessage}"
 
+    foreignKeyMessage = "foreign key constraint failed"
+    uniqueMessage = "unique constraint failed"
+    notNullMessage = "not null constraint failed"
+    checkMessage = "check constraint failed"
+
     if isinstance(exception, sqlite3.IntegrityError):
-        match exceptionMessage.lower():
-            case "foreign key constraint failed":
-                pauseOrError(errorMessage + "\nThe value entered does not exist in the referenced table. Please try a new value\n")
-                
-            case "unique constraint failed":
-                pauseOrError(errorMessage + "\nThe value entered already exists in the database. Please try a new value\n")
-                
-            case "not null constraint failed":
-                pauseOrError(errorMessage + "\nThis column requires a value to be entered. You supplied a null. Please enter an appropriate value\n")
-
-            case "check constraint failed":
-                pauseOrError(errorMessage + "\nThe value entered violates the check constraint. Please enter an appropraite value\n")
-
-            case _:
-                pauseOrError(errorMessage + "\nAn integrity violation has occurred. Please enter an appropraite value\n")
+        if foreignKeyMessage in exceptionMessageLowered:
+            pauseOrError(errorMessage + "\nThe value entered does not exist in the referenced table. Please try a new value\n")
+        elif uniqueMessage in exceptionMessageLowered:
+            pauseOrError(errorMessage + "\nThe value entered already exists in the database. Please try a new value\n")
+        elif notNullMessage in exceptionMessageLowered:
+            pauseOrError(errorMessage + "\nThis column requires a value to be entered. You supplied a null. Please enter an appropriate value\n")
+        elif checkMessage in exceptionMessageLowered:
+            pauseOrError(errorMessage + "\nThe value entered violates the check constraint. Please enter an appropraite value\n")
+        else:
+            pauseOrError(errorMessage + "\nAn integrity violation has occurred. Please enter an appropraite value\n")
 
         createLog(errorMessage)
     else:

@@ -2,6 +2,7 @@ import sqlite3
 from datetime import datetime
 import os
 from enum import Enum
+from dataclasses import dataclass
 
 class InputOptions(Enum):
     EXIT = (0, "Exit")
@@ -20,6 +21,13 @@ class InputOptions(Enum):
         obj._value_ = value
         obj.description = description
         return obj
+
+@dataclass
+class ColumnConstraints:
+    PrimaryKeyColumnName: str
+    ForeignKeyColumnNamesDict: dict[str]
+    UniqueColumnNamesSet:set[str]
+    NotNullColumnNamesSet:set[str]
 
 def displayMenu() -> None:
     print("Make a selection between the following options:")
@@ -146,36 +154,18 @@ def formatAndPrintTable(columnNames: list[str], rows: list[tuple]) -> None:
 
 def displayTable(databaseConnection: sqlite3.Connection, tableName: str, columnNames: list[str], beforeCommit: bool=False, loneCall: bool=False) -> None:
     clearScreen()
-
-    #Get the tables metadata
     cursor = databaseConnection.cursor()
-    cursor.execute(f"PRAGMA table_info({tableName})")
-    tableInfo = cursor.fetchall()
-
-    #row[5] indicates if the column is a primary key. If it is, we extract the primaryKey column name from row[1]
-    for row in tableInfo:
-        if row[5] > 0:
-            primaryKeyColumnName = [row[1]]
-            break
-    else:
-        primaryKeyColumnName = []
+    tablesConstraints = getColumnConstraints(databaseConnection, tableName)
+    primaryKeyColumnName = tablesConstraints.PrimaryKeyColumnName
 
     #combine the primaryKey column name with the columnNames previously specified. 
-    #using dict.fromKeys turns the combination into a dictionary which removes duplicates and preserves order
-    #we then convert it back into a list for use
-    columns = list(dict.fromkeys(primaryKeyColumnName + columnNames))
+    columns = [primaryKeyColumnName] + columnNames
 
     #take the combined names and convert them from a list of strings into a single formated string for use in sql SELECT
     columnsJoined = ", ".join(columns)
 
-    #if the table has a primaryKey column, sort by most recent added entries
-    if primaryKeyColumnName:
-        orderBy = primaryKeyColumnName[0]
-        orderClause = f"ORDER BY {orderBy} DESC"
-    #if no primaryKey column, fallback to no ordering
-    else:
-        orderBy = None
-        orderClause = ""
+    #Sort by most recent added entries
+    orderClause = f"ORDER BY {primaryKeyColumnName} DESC"
 
     cursor.execute(f"SELECT {columnsJoined} FROM {tableName} {orderClause} LIMIT 24")
     rows = cursor.fetchall()
@@ -236,17 +226,100 @@ def insertRows(databaseConnection: sqlite3.Connection, tableName: str, columnNam
         databaseConnection.rollback()
         handleException(exception)
 
+def valueExistsInColumn(databaseConnection: sqlite3.Connection, tableName: str, columnName: str, value: str) -> bool:
+    cursor = databaseConnection.cursor()
+    cursor.execute(f"SELECT COUNT(*) FROM {tableName} WHERE {columnName} = ?", (value,))
+    count = cursor.fetchone()[0]
+    return count > 0
+
+def getColumnConstraints(databaseConnection: sqlite3.Connection, tableName: str) -> ColumnConstraints:
+    cursor = databaseConnection.cursor()
+    primaryKeyColumnName = ""
+    foreignKeyColumnNamesDict = dict()
+    uniqueColumnNamesSet = set()
+    notNullColumnNamesSet = set()
+
+    cursor.execute(f"PRAGMA table_info({tableName})")
+    tableInfo = cursor.fetchall()
+    #look through table_info and store which columns are primaryKeys and which are notNull
+    for row in tableInfo:
+        #tableInfo spits out data in these columns (cid, name, type, notnull, dflt_value, pk)
+        #so index 1 gives the name
+        columnName = row[1] 
+        #index 3 is a not null flag
+        notNull = row[3]
+        #index 5 is a primary key flag
+        isPrimaryKey = row[5]
+
+        if notNull:
+            notNullColumnNamesSet.add(columnName)
+        if isPrimaryKey:
+            primaryKeyColumnName = columnName
+
+    #look through foreign_key_list and store which columns are foreign keys
+    cursor.execute(f"PRAGMA foreign_key_list({tableName})")
+    #foreign_key_list returns data as (id, seq, table, from, to, on_update, on_delete, match)
+    column = cursor.fetchall()
+    #Loop through each foreignKey and grab the appropriate data from it. Use that to store the data into a dict
+    for row in column:
+        localColumnName = row[3]
+        foreignTableName = row[2]
+        foreignColumnName = row[4]
+        foreignKeyColumnNamesDict[localColumnName] = (foreignTableName, foreignColumnName)
+
+
+    cursor.execute(f"PRAGMA index_list({tableName})")
+    indexes = cursor.fetchall()
+    #look through index_list and store which columns are unique
+    for index in indexes:
+        #index_List returns data in these columns (index_number, index_name, unique_flag, origin, partial)
+        indexName = index[1]
+        isUnique = index[2]
+
+        #if a column has a unique flag, we check the index_info table to get the columns name and add it to the uniqueColumns set
+        if isUnique:
+            cursor.execute(f"PRAGMA index_info({indexName})")
+            indexInfo = cursor.fetchall()
+            for row in indexInfo:
+                #index_info returns data in these columns (seqno, cid, name)
+                uniqueColumnNamesSet.add(row[2])
+
+    return ColumnConstraints(primaryKeyColumnName, foreignKeyColumnNamesDict, uniqueColumnNamesSet, notNullColumnNamesSet)
+
 def createEntry(databaseConnection: sqlite3.Connection, tableName: str, columnName: list[str]) -> None:
     while True:
         clearScreen()
+        tableConstraints = getColumnConstraints(databaseConnection, tableName)
+        foreignKeysDict = tableConstraints.ForeignKeyColumnNamesDict
 
+        #Ask the user if they wish to see any existing entries, if so display it
         if getTrueFalseFromInput(f"Show existing {tableName} entries?"):
             displayTable(databaseConnection, tableName, columnName)
 
         values = []
         for column in columnName:
-            value = strippedInput(f"Enter the {column}")
-            values.append(value)
+            #if the column has a foreignKey, display the foreign table
+            if column in foreignKeysDict:
+                foreignTableName, foreignColumnName = foreignKeysDict[column]
+                try:
+                    displayTable(databaseConnection, foreignTableName, [foreignColumnName])
+                except sqlite3.Error as error:
+                    handleException(error)
+                
+                wrongEntry = True
+                #Loop this column entry until a valid foreignKey is entered
+                while wrongEntry:
+                    value = strippedInput(f"Enter the {column}")
+                    #Check if the foreign key value is valid
+                    if valueExistsInColumn(databaseConnection, foreignTableName, foreignColumnName, value):
+                        values.append(value)
+                        wrongEntry = False
+                    else:
+                        print(f"{value} is not a valid entry for {foreignColumnName}. Please try again\n")
+                    
+            else:
+                value = strippedInput(f"Enter the {column}")
+                values.append(value)
 
         insertRows(databaseConnection, tableName, columnName, values)
 
@@ -282,9 +355,6 @@ def createGameInventoryItemsGameIDEntries(databaseConnection: sqlite3.Connection
 
 def createGameInfoEntry(databaseConnection: sqlite3.Connection) -> None:
     createEntry(databaseConnection, "GameInfo", ["GameID", "Name", "Region", "Platform", "PriceChartingURL"])
-#    cursor.execute(f"SELECT Region from Regions")
-#    regions = [row[0] for row in cursor.fetchall()]
-#    print("Select one of the following: " + ", ".join(regions))
 
 def main():
     databaseFile = 'Inventory Finances Database.sqlite'

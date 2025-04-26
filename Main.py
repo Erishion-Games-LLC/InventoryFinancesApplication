@@ -128,10 +128,11 @@ def formatAndPrintTable(columnNames: list[str], rows: list[tuple]) -> None:
         rowStr = " | ".join(spacedRowValues)
         print(rowStr)
 
-def displayTable(cursor: sqlite3.Cursor, tableName: str, columnNames: list[str], beforeCommit: bool=False, loneCall: bool=False) -> None:
+def displayTable(databaseConnection: sqlite3.Connection, tableName: str, columnNames: list[str], beforeCommit: bool=False, loneCall: bool=False) -> None:
     clearScreen()
 
     #Get the tables metadata
+    cursor = databaseConnection.cursor()
     cursor.execute(f"PRAGMA table_info({tableName})")
     tableInfo = cursor.fetchall()
 
@@ -212,7 +213,7 @@ def insertRows(databaseConnection: sqlite3.Connection, tableName: str, columnNam
             cursor.execute(sqlInsertStatement, values)
             
         #display the table showing the uncommited new entry   
-        displayTable(cursor, tableName, columnNames, True)
+        displayTable(databaseConnection, tableName, columnNames, True)
         confirmCommit(databaseConnection)
 
     except Exception as exception:
@@ -222,10 +223,9 @@ def insertRows(databaseConnection: sqlite3.Connection, tableName: str, columnNam
 def createEntry(databaseConnection: sqlite3.Connection, tableName: str, columnName: list[str]) -> None:
     while True:
         clearScreen()
-        cursor = databaseConnection.cursor()
 
         if getTrueFalseFromInput(f"Show existing {tableName} entries?"):
-            displayTable(cursor, tableName, columnName)
+            displayTable(databaseConnection, tableName, columnName)
 
         values = []
         for column in columnName:
@@ -273,7 +273,6 @@ def createGameInfoEntry(databaseConnection: sqlite3.Connection) -> None:
 def main():
     databaseFile = 'Inventory Finances Database.sqlite'
     with sqlite3.connect(databaseFile) as databaseConnection:
-        cursor = databaseConnection.cursor()
         while True:
             displayMenu()
             userInput = strippedInput("Enter your choice:")
@@ -307,7 +306,7 @@ def main():
                     continue
 
                 case InputOptions.SHOW_ALL_REGION_ENTRIES:
-                    displayTable(cursor, "Regions", ["Region"], False, True)
+                    displayTable(databaseConnection, "Regions", ["Region"], False, True)
                     continue
 
                 case InputOptions.CREATE_MARKETPLACE_ENTRY:
@@ -315,7 +314,7 @@ def main():
                     continue
 
                 case InputOptions.SHOW_ALL_MARKETPLACE_ENTRIES:
-                    displayTable(cursor, "Marketplaces", ["Marketplace"], False, True)
+                    displayTable(databaseConnection, "Marketplaces", ["Marketplace"], False, True)
                     continue
 
     #            case InputOptions.CREATE_SHIPMENTSIN_ENTRY:

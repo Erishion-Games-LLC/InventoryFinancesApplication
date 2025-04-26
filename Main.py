@@ -47,12 +47,27 @@ def createLog(error_message: str) -> None:
         errorFile.write(f"[{timestamp}] {error_message}\n")
 
 def handleException(exception: BaseException) -> None:
-    exceptionType = type(exception)
-    exceptionName = exceptionType.__name__
-    errorMessage = f"{exceptionName}: {str(exception)}"
+    exceptionName = type(exception).__name__
+    exceptionMessage = str(exception)
+    errorMessage = f"{exceptionName}: {exceptionMessage}"
 
-    if exceptionType == sqlite3.IntegrityError:
-        pauseOrError(errorMessage + "\nThe value entered already exists in the database. Please try a new value\n")
+    if isinstance(exception, sqlite3.IntegrityError):
+        match exceptionMessage.lower():
+            case "foreign key constraint failed":
+                pauseOrError(errorMessage + "\nThe value entered does not exist in the referenced table. Please try a new value\n")
+                
+            case "unique constraint failed":
+                pauseOrError(errorMessage + "\nThe value entered already exists in the database. Please try a new value\n")
+                
+            case "not null constraint failed":
+                pauseOrError(errorMessage + "\nThis column requires a value to be entered. You supplied a null. Please enter an appropriate value\n")
+
+            case "check constraint failed":
+                pauseOrError(errorMessage + "\nThe value entered violates the check constraint. Please enter an appropraite value\n")
+
+            case _:
+                pauseOrError(errorMessage + "\nAn integrity violation has occurred. Please enter an appropraite value\n")
+
         createLog(errorMessage)
     else:
         pauseOrError(errorMessage)
@@ -273,6 +288,7 @@ def createGameInfoEntry(databaseConnection: sqlite3.Connection) -> None:
 def main():
     databaseFile = 'Inventory Finances Database.sqlite'
     with sqlite3.connect(databaseFile) as databaseConnection:
+        databaseConnection.execute("PRAGMA foreign_keys = ON")
         while True:
             displayMenu()
             userInput = strippedInput("Enter your choice:")

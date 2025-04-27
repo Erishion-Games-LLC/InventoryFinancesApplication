@@ -327,12 +327,6 @@ def createEntry(databaseConnection: sqlite3.Connection, tableName: str, columnNa
             clearScreen()
             break
 
-def createRegionEntry(databaseConnection: sqlite3.Connection) -> None:
-    createEntry(databaseConnection, "Regions", ["Region"])
-
-def createMarketplaceEntry(databaseConnection: sqlite3.Connection) -> None:
-    createEntry(databaseConnection, "Marketplaces", ["Marketplace"])
-
 def createGameInventoryItemsGameIDEntries(databaseConnection: sqlite3.Connection) -> None:
     clearScreen()
     gameID = strippedInput("Input the GameID, ensure you insert correctly")
@@ -352,9 +346,6 @@ def createGameInventoryItemsGameIDEntries(databaseConnection: sqlite3.Connection
             values.append([gameID, contentType, condition])
             
     insertRows(databaseConnection, "GameInventoryItems", ["GameID", "ContentType", "Condition"], values)
-
-def createGameInfoEntry(databaseConnection: sqlite3.Connection) -> None:
-    createEntry(databaseConnection, "GameInfo", ["GameID", "Name", "Region", "Platform", "PriceChartingURL"])
 
 def main():
     databaseFile = 'Inventory Finances Database.sqlite'
@@ -385,11 +376,11 @@ def main():
                     continue
 
                 case InputOptions.CREATE_GAME_INFO_ENTRY:
-                    createGameInfoEntry(databaseConnection)
+                    createEntry(databaseConnection, "GameInfo", ["GameID", "Name", "Region", "Platform", "PriceChartingURL"])
                     continue
 
                 case InputOptions.CREATE_REGION_ENTRY:
-                    createRegionEntry(databaseConnection)
+                    createEntry(databaseConnection, "Regions", ["Region"])
                     continue
 
                 case InputOptions.SHOW_ALL_REGION_ENTRIES:
@@ -397,7 +388,7 @@ def main():
                     continue
 
                 case InputOptions.CREATE_MARKETPLACE_ENTRY:
-                    createMarketplaceEntry(databaseConnection)
+                    createEntry(databaseConnection, "Marketplaces", ["Marketplace"])
                     continue
 
                 case InputOptions.SHOW_ALL_MARKETPLACE_ENTRIES:
